@@ -31,15 +31,15 @@ from trainer import Trainer
 logger = logging.getLogger(__name__)
 
 #加载一个预训练的分词器（Tokenizer）。在自然语言处理中，分词器用于将原始文本字符串分割成更小的单元（通常是词或者子词），这些单元用于模型的输入
-def load_tokenizer(model_name_or_path: str = "fastchat/tokenizer"):
+def load_tokenizer(model_name_or_path: str = "fastchat/tokenizer"): #这个参数允许调用者指定一个包含预训练模型的分词器文件的路径或者模型的标识符。
     logger.info(f"init tokenizer")
     from fastchat.tokenizer.tokenization_llama_zh import LlamazhTokenizer #LlamazhTokenizer` 类。这个类是 `Llama` 分词器的中国版本
-    tokenizer = LlamazhTokenizer.from_pretrained(
-        model_name_or_path, trust_remote_code=True)
+    tokenizer = LlamazhTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
     return tokenizer
 
 #特定的配置创建 `LlamaForCausalLM` 模型实例，并将其部署到（转至）CUDA设备上。`device_map` 参数指定了多GPU并行。
 def load_model(tokenizer, model_name_or_path: Optional[str] = None, device_map: Optional[Dict[int, List[int]]] = None):
+#model_name_or_path`：指定模型的名称或者模型配置和权重的路径。如果设为 `None`，函数会使用默认的配置或在后续的代码中指定。
 
     from transformers.models.llama import LlamaConfig
     logger.info("init model")
@@ -53,9 +53,9 @@ def load_model(tokenizer, model_name_or_path: Optional[str] = None, device_map: 
                          eos_token_id=tokenizer.eos_token_id,
                          pad_token_id=tokenizer.pad_token_id,
                          )
-
+    #在配置模型参数之后，函数导入了 `LlamaForCausalLM` 类。这个类表示一个用于因果语言模型（Causal Language Modeling）的 `Llama` 模型。
     from fastchat.models.llama.modeling_llama_zh import LlamaForCausalLM
-    model = LlamaForCausalLM(config=config).to(torch.bfloat16).cuda()
+    model = LlamaForCausalLM(config=config).to(torch.bfloat16).cuda() #向构造函数传入了之前创建的配置对象 `config`
     model.parallelize(device_map=device_map)
 
     return model
@@ -93,6 +93,7 @@ def load_dataset_from_path(data_path: Optional[str] = None,
 
 def load_tokenizer_and_model():
 
+    #GPU 0 负责处理模型的层 0 到 6，而 GPU 1 负责处理模型的层 7 到 13，依此类推。这允许大型模型跨多个GPU进行分布以平衡内存使用，并可能加快训练过程。
     device_map = {
         0: [0, 1, 2, 3, 4, 5, 6, ],
         1: [7, 8, 9, 10, 11, 12, 13, ],
@@ -200,6 +201,7 @@ def train(*,
           max_target_length: int,
           gradient_accumulation_steps: int):
     set_seed(seed=seed)
+
     tokenizer, model = load_tokenizer_and_model()
 
     dataset = load_dataset_from_path(
@@ -283,7 +285,8 @@ def train(*,
     logger.info(f"Saving Model to {local_output_dir}")
     trainer.save_model(output_dir=local_output_dir)
 
-
+#使用了 `click` 库来定义一个命令行接口（CLI）的命令。`在程序中通过装饰器添加了多个命令行选项参数。
+#每个@click.option()` 装饰器定义了一个命令行选项。
 @click.command()
 @click.option("--dataset-path", type=str, default="data/opendata")
 @click.option("--epochs", type=int, default=3)
@@ -301,6 +304,7 @@ def train(*,
 @click.option("--max-source-length", type=int, default=256)
 @click.option("--max-target-length", type=int, default=1024)
 @click.option("--gradient-accumulation-steps", type=int, default=8)
+#`main` 函数通过各种选项设置了一系列训练参数，然后将所有这些参数打包起来作为 `kwargs` 字典传递给 `train` 函数，后者负责执行实际的训练过程。
 def main(**kwargs):
     train(**kwargs)
 
