@@ -29,7 +29,7 @@ from trainer import Trainer
 # from arguments import ModelArguments, DataTrainingArguments
 
 logger = logging.getLogger(__name__)
-
+print("torch.cuda.device_count()=================,",torch.cuda.device_count())
 #加载一个预训练的分词器（Tokenizer）。在自然语言处理中，分词器用于将原始文本字符串分割成更小的单元（通常是词或者子词），这些单元用于模型的输入
 def load_tokenizer(model_name_or_path: str = "fastchat/tokenizer"): #这个参数允许调用者指定一个包含预训练模型的分词器文件的路径或者模型的标识符。
     logger.info(f"init tokenizer")
@@ -79,7 +79,7 @@ def load_dataset_from_path(data_path: Optional[str] = None,
 
     all_file_list = get_all_datapath(data_path)
     data_files = {'train': all_file_list}
-    extension = all_file_list[0].split(".")[-1]
+    extension = all_file_list[0].split(".")[-1] #json
 
     logger.info("load files %d number", len(all_file_list))
 
@@ -135,6 +135,7 @@ def preprocess_function_(examples: Dict, #包含文本数据的字典，可能�
     for i in range(len(examples[prompt_column])):
         if examples[prompt_column][i] and examples[response_column][i]:
             query, answer = examples[prompt_column][i], examples[response_column][i]
+            # print("query==========================",query)
 
             if history_column is None:
                 prompt = query
@@ -148,6 +149,8 @@ def preprocess_function_(examples: Dict, #包含文本数据的字典，可能�
                     len(history), query)
 
             prompt = prompt
+            # print("prompt==========================",prompt)
+            # print("answer==========================",answer)
 
 
             #使用 tokenizer 将 `prompt` 和 `answer` 文本编码为 token ID 序列
@@ -163,17 +166,20 @@ def preprocess_function_(examples: Dict, #包含文本数据的字典，可能�
             #构建完整的输入序列，其中包括必要的特殊 token（如 `bos_token_id` 代表开始符号）。
             input_ids = tokenizer.build_inputs_with_special_tokens(
                 a_ids, b_ids)
-
             #计算上下文的长度 `context_length`，这通常是问题部分的长度。
-            context_length = input_ids.index(tokenizer.bos_token_id)
+            context_length = input_ids.index(tokenizer.bos_token_id) #查找`tokenizer.bos_token_id`在`input_ids`列表中的索引
             mask_position = context_length - 1
             #在上下文结束后的第一个 token 开始创建标签序列，用于后续的语言模型训练。在上下文处标签设为忽略的值（默认为-100），这样损失函数在计算时会跳过这部分。
-            labels = [-100] * context_length + input_ids[mask_position+1:]
+            labels = [-100] * context_length + input_ids[mask_position+1:] #将`input_ids`列表中从`mask_position+1`（包含）之后的所有元素添加到这个`labels`列表的末尾。
+            # print("labels==========================",labels)
 
-            pad_len = max_seq_length - len(input_ids)
+            pad_len = max_seq_length - len(input_ids) #到达模型需要的最大序列长度还差多少个token。后续将`input_ids`填充到固定长度。
+            #使用分词器的填充扩展`input_ids`和`labels`列表，使它们的长度达到`max_seq_length`。确保所有输入序列的长度一致，这对于大多数机器学习模型来说都是必要的。
             input_ids = input_ids + [tokenizer.pad_token_id] * pad_len
             labels = labels + [tokenizer.pad_token_id] * pad_len
+            
             if ignore_pad_token_for_loss:
+                #这段代码遍历`labels`列表，并将其中等于`tokenizer.pad_token_id`的值替换为`-100`。在计算损失时希望忽略填充的token。
                 labels = [(l if l != tokenizer.pad_token_id else -100)
                           for l in labels]
 
@@ -204,8 +210,7 @@ def train(*,
 
     tokenizer, model = load_tokenizer_and_model()
 
-    dataset = load_dataset_from_path(
-        data_path=dataset_path, cache_dir="cache_data")['train']
+    dataset = load_dataset_from_path(data_path=dataset_path, cache_dir="cache_data")['train']
     #将`preprocess_function`应用于数据集，批处理模式开启，移除原始的`q`和`a`列，在十个进程中并行处理
     preprocess_function = partial(preprocess_function_, tokenizer=tokenizer,
                                   max_source_length=max_source_length,
@@ -224,26 +229,28 @@ def train(*,
 
     )
     logger.info("Processed dataset has %d rows", dataset.num_rows)
-    dataset = dataset.shuffle(seed=seed)
+    dataset = dataset.shuffle(seed=seed)  #`seed`用来初始化随机数生成器，确保打乱的顺序是可重复的，即每次使用相同的种子值(`seed`)将得到相同的随机顺序。
     split_dataset = dataset.train_test_split(test_size=test_size, seed=seed)
 
     logger.info("Train data size: %d", split_dataset["train"].num_rows)
     logger.info("Test data size: %d", split_dataset["test"].num_rows)
 
     def print_dataset_example(example):
-        print("input_ids", example["input_ids"])
-        print("inputs", tokenizer.decode(example["input_ids"]))
+        print("input_ids", example["input_ids"]) #输入文本经过分词器处理后得到的token ID序列。
+        print("inputs", tokenizer.decode(example["input_ids"])) #使用分词器的`decode`方法，将`"input_ids"`转回它们原始的文本形式
         print("label_ids", example["labels"])
         print("labels", tokenizer.decode(example["labels"]))
 
     print_dataset_example(split_dataset['train'][0])
 
-    label_pad_token_id = - 100
+
+    label_pad_token_id = - 100 #`label_pad_token_id`，用于在数据整理时标记不应计入损失计算的标签token的ID
+    #`DataCollatorForSeq2Seq`是一个处理和准备数据的重要工具，它的主要作用是按照序列到序列模型（Seq2Seq）的需求来处理和整理数据。
     data_collator = DataCollatorForSeq2Seq(
         tokenizer,
         model=model,
         label_pad_token_id=label_pad_token_id,
-        pad_to_multiple_of=None,
+        pad_to_multiple_of=None, #表示不需要将tokens填充到某个公倍数长度
         padding=False
     )
     training_args = TrainingArguments(
@@ -252,6 +259,8 @@ def train(*,
         per_device_eval_batch_size=per_device_eval_batch_size,
         fp16=False,
         bf16=True,
+        # fp16=True,
+        # bf16=False,
         learning_rate=lr,
         num_train_epochs=epochs,
         logging_strategy="steps",
@@ -270,16 +279,18 @@ def train(*,
         gradient_accumulation_steps=gradient_accumulation_steps,
     )
     logger.info("Instantiating Trainer")
+    #创建一个训练器实例
     trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=split_dataset['train'],
+        model=model,#配置了模型(`model`)
+        args=training_args,#训练参数(`training_args`)
+        train_dataset=split_dataset['train'],#训练数据集和评估数据集
         eval_dataset=split_dataset['test'],
-        tokenizer=tokenizer,
-        data_collator=data_collator
+        tokenizer=tokenizer, #分词器(`tokenizer`)
+        data_collator=data_collator #上面创建的数据整理工具(`data_collator`)
     )
 
     logger.info("Training")
+    breakpoint()
     trainer.train() #开始训练模型
 
     logger.info(f"Saving Model to {local_output_dir}")
