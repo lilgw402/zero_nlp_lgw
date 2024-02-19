@@ -39,6 +39,7 @@ _CONFIG_FOR_DOC = "LlamaConfig"
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
+#创建因果掩码（Causal Mask），这用于自注意力（Self-Attention）层，以确保在生成序列时不会利用未来的信息。
 def _make_causal_mask(
     input_ids_shape: torch.Size, dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
 ):

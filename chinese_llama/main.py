@@ -30,15 +30,15 @@ from trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
-
+#加载一个预训练的分词器（Tokenizer）。在自然语言处理中，分词器用于将原始文本字符串分割成更小的单元（通常是词或者子词），这些单元用于模型的输入
 def load_tokenizer(model_name_or_path: str = "fastchat/tokenizer"):
     logger.info(f"init tokenizer")
-    from fastchat.tokenizer.tokenization_llama_zh import LlamazhTokenizer
+    from fastchat.tokenizer.tokenization_llama_zh import LlamazhTokenizer #LlamazhTokenizer` 类。这个类是 `Llama` 分词器的中国版本
     tokenizer = LlamazhTokenizer.from_pretrained(
         model_name_or_path, trust_remote_code=True)
     return tokenizer
 
-
+#特定的配置创建 `LlamaForCausalLM` 模型实例，并将其部署到（转至）CUDA设备上。`device_map` 参数指定了多GPU并行。
 def load_model(tokenizer, model_name_or_path: Optional[str] = None, device_map: Optional[Dict[int, List[int]]] = None):
 
     from transformers.models.llama import LlamaConfig
@@ -60,7 +60,7 @@ def load_model(tokenizer, model_name_or_path: Optional[str] = None, device_map: 
 
     return model
 
-
+#递归获取给定目录下所有文件的路径。
 def get_all_datapath(dir_name: str) -> List[str]:
     all_file_list = []
     # all_file_size = []
@@ -73,7 +73,7 @@ def get_all_datapath(dir_name: str) -> List[str]:
 
     return all_file_list
 
-
+#根据路径加载数据文件并使用 `datasets` 库将它们转换为 `Dataset` 对象。
 def load_dataset_from_path(data_path: Optional[str] = None,
                            cache_dir: Optional[str] = None):
 
@@ -114,15 +114,15 @@ def load_tokenizer_and_model():
 
     return tokenizer, model
 
-
-def preprocess_function_(examples: Dict,
-                         tokenizer: AutoTokenizer,
+#主要用于处理用于训练语言模型的文本数据。这个函数从原始的数据集中预处理和编码文本，为模型训练准备必要的输入和标签（labels）
+def preprocess_function_(examples: Dict, #包含文本数据的字典，可能是从数据集中抽取出的一批样本
+                         tokenizer: AutoTokenizer, #用于将文本转换成模型可以处理的格式。
                          max_source_length: int = 1024,
                          max_target_length: int = 1024,
-                         prompt_column: Optional[str] = 'q',
+                         prompt_column: Optional[str] = 'q', #数据中提示（比如问题）所在列的名称。
                          response_column: Optional[str] = 'a',
-                         history_column: Optional[str] = None,
-                         ignore_pad_token_for_loss=-100,
+                         history_column: Optional[str] = None, #历史对话数据所在列的名称。
+                         ignore_pad_token_for_loss=-100, #在计算损失时应该忽略的特殊标记的标签，通常设置为 -100，这样在计算损失时就可以忽略填充的token。
                          ):
     max_seq_length = max_source_length + max_target_length
 
@@ -130,6 +130,7 @@ def preprocess_function_(examples: Dict,
         "input_ids": [],
         "labels": [],
     }
+    # 遍历`examples`中的每个样本。对于每个样本，取出对应于 `prompt_column` 和 `response_column` 的文本内容作为`query`和`answer`
     for i in range(len(examples[prompt_column])):
         if examples[prompt_column][i] and examples[response_column][i]:
             query, answer = examples[prompt_column][i], examples[response_column][i]
@@ -148,6 +149,7 @@ def preprocess_function_(examples: Dict,
             prompt = prompt
 
 
+            #使用 tokenizer 将 `prompt` 和 `answer` 文本编码为 token ID 序列
             a_ids = tokenizer.encode(text=prompt, add_special_tokens=False)
             b_ids = tokenizer.encode(text=answer, add_special_tokens=False)
 
@@ -157,11 +159,14 @@ def preprocess_function_(examples: Dict,
             if len(b_ids) > max_target_length - 2:
                 b_ids = b_ids[: max_target_length - 2]
 
+            #构建完整的输入序列，其中包括必要的特殊 token（如 `bos_token_id` 代表开始符号）。
             input_ids = tokenizer.build_inputs_with_special_tokens(
                 a_ids, b_ids)
 
+            #计算上下文的长度 `context_length`，这通常是问题部分的长度。
             context_length = input_ids.index(tokenizer.bos_token_id)
             mask_position = context_length - 1
+            #在上下文结束后的第一个 token 开始创建标签序列，用于后续的语言模型训练。在上下文处标签设为忽略的值（默认为-100），这样损失函数在计算时会跳过这部分。
             labels = [-100] * context_length + input_ids[mask_position+1:]
 
             pad_len = max_seq_length - len(input_ids)
@@ -174,16 +179,16 @@ def preprocess_function_(examples: Dict,
             model_inputs["input_ids"].append(input_ids)
             model_inputs["labels"].append(labels)
 
-    return model_inputs
+    return model_inputs #最后返回 `model_inputs` 字典，这些都是经过处理、准备发送到模型进行训练的数据。
 
 
 def train(*,
-          dataset_path: str,
+          dataset_path: str, #输入数据集的路径
           epochs: int,
           per_device_train_batch_size: int,
           per_device_eval_batch_size: int,
           lr: float,
-          seed: int,
+          seed: int, #随机种子，用于复现结果
           logging_steps: int,
           save_steps: int,
           eval_steps: int,
@@ -199,6 +204,7 @@ def train(*,
 
     dataset = load_dataset_from_path(
         data_path=dataset_path, cache_dir="cache_data")['train']
+    #将`preprocess_function`应用于数据集，批处理模式开启，移除原始的`q`和`a`列，在十个进程中并行处理
     preprocess_function = partial(preprocess_function_, tokenizer=tokenizer,
                                   max_source_length=max_source_length,
                                   max_target_length=max_target_length,
@@ -272,7 +278,7 @@ def train(*,
     )
 
     logger.info("Training")
-    trainer.train()
+    trainer.train() #开始训练模型
 
     logger.info(f"Saving Model to {local_output_dir}")
     trainer.save_model(output_dir=local_output_dir)
